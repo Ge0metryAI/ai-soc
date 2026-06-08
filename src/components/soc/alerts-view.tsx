@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useSocStore } from "@/store/socStore";
-import { useAiConfig } from "@/store/aiConfigStore";
+import { useAiStatus } from "@/store/aiConfigStore";
 import { ALERT_TYPE_LABEL, MITRE_MAP, aggregate, deriveAlerts, priorityRank } from "@/lib/engine";
 import type { Alert, AlertFilters, AlertStatus, Priority, Severity } from "@/types";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -321,10 +321,7 @@ function AlertDetail({ a }: { a: Alert }) {
 }
 
 function AiSuggestionBlock({ a }: { a: Alert }) {
-  const enabled = useAiConfig((s) => s.enabled);
-  const baseUrl = useAiConfig((s) => s.baseUrl);
-  const apiKey = useAiConfig((s) => s.apiKey);
-  const model = useAiConfig((s) => s.model);
+  const configured = useAiStatus((s) => s.configured);
   const [aiText, setAiText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -347,7 +344,6 @@ function AiSuggestionBlock({ a }: { a: Alert }) {
             confidence: a.confidence,
             priority: a.priority,
           },
-          config: { baseUrl, apiKey, model },
         }),
       });
       const data = await res.json();
@@ -359,12 +355,11 @@ function AiSuggestionBlock({ a }: { a: Alert }) {
     setLoading(false);
   }
 
-  const canUseAi = enabled && !!apiKey;
   return (
     <div className="rounded-lg border p-3">
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">AI 处置建议</span>
-        {canUseAi && (
+        {configured && (
           <Button
             size="sm"
             variant="outline"
@@ -378,13 +373,13 @@ function AiSuggestionBlock({ a }: { a: Alert }) {
       </div>
       <div>{aiText ?? a.aiSuggestion ?? "(置信度/优先级未达阈值,暂不生成规则建议)"}</div>
       {aiText ? (
-        <div className="mt-1 text-[10px] text-sky-400">由配置的 AI 模型({model})动态生成</div>
+        <div className="mt-1 text-[10px] text-sky-400">由服务端 AI 模型动态生成</div>
       ) : a.aiSuggestion ? (
         <div className="mt-1 text-[10px] text-muted-foreground">规则引擎模板生成</div>
       ) : null}
       {err && <div className="mt-1 text-xs text-red-400">{err}</div>}
-      {!canUseAi && (
-        <div className="mt-1 text-[10px] text-muted-foreground">在「设置」中启用并配置 AI 后,可动态生成建议</div>
+      {!configured && (
+        <div className="mt-1 text-[10px] text-muted-foreground">服务端配置 AI_API_KEY 后,可动态生成建议</div>
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -16,7 +16,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { useSocStore } from "@/store/socStore";
-import { useAiConfig } from "@/store/aiConfigStore";
+import { useAiStatus } from "@/store/aiConfigStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -37,8 +37,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const status = useSocStore((s) => s.status);
   const role = useSocStore((s) => s.role);
   const setRole = useSocStore((s) => s.setRole);
-  const aiEnabled = useAiConfig((s) => s.enabled);
+  const aiConfigured = useAiStatus((s) => s.configured);
+  const checkAi = useAiStatus((s) => s.check);
   const canOperate = role !== "user1";
+  const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
     const auth = typeof window !== "undefined" ? localStorage.getItem("soc-auth") : null;
@@ -47,11 +49,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
     void useSocStore.persist.rehydrate();
-    void useAiConfig.persist.rehydrate();
     setRole(auth);
     document.cookie = `soc-role=${encodeURIComponent(auth)}; path=/; max-age=86400; samesite=lax`;
+    setAuthed(true);
     void hydrate();
-  }, [hydrate, router, setRole]);
+    void checkAi();
+  }, [hydrate, router, setRole, checkAi]);
 
   function logout() {
     localStorage.removeItem("soc-auth");
@@ -60,6 +63,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const current = NAV.find((n) => n.href === pathname);
+
+  if (!authed) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        加载中…
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -113,7 +124,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 只读模式(user1)
               </span>
             )}
-            {aiEnabled && (
+            {aiConfigured && (
               <span className="flex items-center gap-1 rounded-md bg-sky-500/15 px-2 py-1 text-xs text-sky-400 ring-1 ring-sky-500/30">
                 <Bot className="size-3" />
                 AI 增强

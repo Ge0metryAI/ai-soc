@@ -2,50 +2,34 @@
 
 import { useEffect, useState } from "react";
 import { Bot } from "lucide-react";
-import { useAiConfig } from "@/store/aiConfigStore";
+import { useAiStatus } from "@/store/aiConfigStore";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 export function SettingsView() {
-  const setConfig = useAiConfig((s) => s.setConfig);
-  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
-  const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-4o-mini");
-  const [enabled, setEnabled] = useState(false);
+  const configured = useAiStatus((s) => s.configured);
+  const model = useAiStatus((s) => s.model);
+  const check = useAiStatus((s) => s.check);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
 
   useEffect(() => {
-    void Promise.resolve(useAiConfig.persist.rehydrate()).then(() => {
-      const c = useAiConfig.getState();
-      setBaseUrl(c.baseUrl);
-      setApiKey(c.apiKey);
-      setModel(c.model);
-      setEnabled(c.enabled);
-    });
-  }, []);
-
-  function save() {
-    setConfig({ baseUrl, apiKey, model, enabled });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
+    void check();
+  }, [check]);
 
   async function test() {
     setTesting(true);
-    setTestResult(null);
+    setResult(null);
     try {
       const res = await fetch("/api/ai-suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: { baseUrl, apiKey, model } }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
-      setTestResult(res.ok ? `✅ 连接成功:${data.suggestion || "(空响应)"}` : `❌ ${data.error}`);
+      setResult(res.ok ? `✅ 连接成功:${data.suggestion || "(空响应)"}` : `❌ ${data.error}`);
     } catch (e) {
-      setTestResult(`❌ ${String(e)}`);
+      setResult(`❌ ${String(e)}`);
     }
     setTesting(false);
   }
@@ -55,43 +39,44 @@ export function SettingsView() {
       <Card className="space-y-4 p-6">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Bot className="size-4 text-sky-400" />
-          AI 增强设置(可选)
+          AI 增强设置
         </div>
-        <p className="text-xs text-muted-foreground">
-          配置任意兼容 OpenAI 接口的模型(OpenAI / DeepSeek / Moonshot / OpenRouter / 本地 Ollama 均可)。
-          启用后,在告警详情可用「🤖 AI 生成」动态生成处置建议;未配置或调用失败时,自动回退到内置可解释规则模板。
-        </p>
 
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="size-4" />
-          启用 AI 增强
-        </label>
+        <div className="rounded-md border p-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span>当前状态</span>
+            {configured ? (
+              <span className="text-emerald-400">● 已配置{model ? `(模型 ${model})` : ""}</span>
+            ) : (
+              <span className="text-muted-foreground">○ 未配置(使用内置规则模板)</span>
+            )}
+          </div>
+        </div>
 
-        <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">Base URL</div>
-          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
-        </div>
-        <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">API Key</div>
-          <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
-        </div>
-        <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">模型</div>
-          <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gpt-4o-mini / deepseek-chat / ..." />
+        <div className="space-y-2 text-xs text-muted-foreground">
+          <p className="text-amber-400/90">
+            🔐 出于安全,API Key 仅存于<strong>服务端环境变量</strong>,不在前端存储 / 显示 / 传输(请求体不携带 key)。
+          </p>
+          <p>
+            在 Vercel 项目 <strong>Settings → Environment Variables</strong>(或本地 <code>.env.local</code>)配置:
+          </p>
+          <pre className="overflow-x-auto rounded bg-muted p-2 text-[11px] leading-5">{`AI_API_KEY=sk-...                      # 模型密钥(必填,服务端)
+AI_BASE_URL=https://api.openai.com/v1  # 可选,兼容 DeepSeek/Moonshot/Ollama
+AI_MODEL=gpt-4o-mini                   # 可选`}</pre>
+          <p>
+            配置后 <strong>Redeploy</strong> 生效。随后在告警详情可用「🤖 AI 生成」动态生成建议;调用失败或未配置时,自动回退到可解释规则模板。
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button onClick={save}>保存</Button>
           <Button variant="outline" onClick={() => void test()} disabled={testing}>
             {testing ? "测试中..." : "测试连接"}
           </Button>
-          {saved && <span className="text-xs text-emerald-400">已保存</span>}
+          <Button variant="ghost" onClick={() => void check()}>
+            刷新状态
+          </Button>
         </div>
-        {testResult && <div className="rounded-md border p-2 text-xs">{testResult}</div>}
-
-        <p className="text-xs text-amber-400/80">
-          ⚠️ API Key 仅保存在你浏览器的 localStorage,请求经本应用服务端转发至你配置的接口。公开演示时注意不要暴露付费 Key。
-        </p>
+        {result && <div className="rounded-md border p-2 text-xs">{result}</div>}
       </Card>
     </div>
   );

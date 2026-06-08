@@ -1,29 +1,26 @@
-// 可选 AI 增强配置(兼容 OpenAI 接口)—— 存浏览器 localStorage,用户自行配置
+// AI 增强状态(只读) —— 密钥在服务端,前端只知道"是否已配置 + 模型名",不接触 key
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
-export interface AiConfig {
-  enabled: boolean;
-  baseUrl: string;
-  apiKey: string;
-  model: string;
+interface AiStatus {
+  configured: boolean;
+  model: string | null;
+  checked: boolean;
+  check: () => Promise<void>;
 }
 
-interface AiConfigStore extends AiConfig {
-  setConfig: (patch: Partial<AiConfig>) => void;
-}
-
-export const useAiConfig = create<AiConfigStore>()(
-  persist(
-    (set) => ({
-      enabled: false,
-      baseUrl: "https://api.openai.com/v1",
-      apiKey: "",
-      model: "gpt-4o-mini",
-      setConfig: (patch) => set(patch),
-    }),
-    { name: "guoshun-ai-config", skipHydration: true },
-  ),
-);
+export const useAiStatus = create<AiStatus>((set) => ({
+  configured: false,
+  model: null,
+  checked: false,
+  check: async () => {
+    try {
+      const r = await fetch("/api/ai-suggest", { cache: "no-store" });
+      const j = await r.json();
+      set({ configured: !!j.configured, model: j.model ?? null, checked: true });
+    } catch {
+      set({ configured: false, checked: true });
+    }
+  },
+}));

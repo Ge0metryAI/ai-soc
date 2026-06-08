@@ -18,13 +18,16 @@ function getRole(req: Request): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-// AI 自动处置:对置信度 >80% 的待处置告警自动采纳(模拟 AI 自动化响应,operator 记为 AI-自动处置)
-async function autoDisposeHighConfidence() {
+// AI 自动处置:对高置信(>80)或高优先级(P0/P1)的待处置告警自动采纳(模拟 AI 自动化响应,operator 记为 AI-自动处置)
+async function autoDisposeHighRisk() {
   const snap = await readSnapshot();
   const disposed = new Set(snap.dispositions.map((d) => d.alertId));
   const derived = deriveAlerts(snap.alerts, snap.learningMemory, snap.assets);
   const targets = derived.filter(
-    (a) => a.status === "pending" && a.confidence > 80 && !disposed.has(a.id),
+    (a) =>
+      a.status === "pending" &&
+      (a.confidence > 80 || a.priority === "P0" || a.priority === "P1") &&
+      !disposed.has(a.id),
   );
   for (const a of targets) {
     await setAlertStatus(a.id, "adopted");
@@ -41,7 +44,7 @@ async function autoDisposeHighConfidence() {
 
 export async function GET() {
   try {
-    await autoDisposeHighConfidence();
+    await autoDisposeHighRisk();
     const snap = await readSnapshot();
     return NextResponse.json(snap);
   } catch (e) {

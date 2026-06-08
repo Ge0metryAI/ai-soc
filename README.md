@@ -4,7 +4,8 @@
 > 可解释规则驱动的 AI SOC 看板:**告警降噪 / 置信度研判 / 智能优先级 / AI 处置建议 / 误报学习 / 攻击时间线**
 
 ## 🔗 在线演示
-- 部署地址:**（部署后填写,如 https://ai-soc.vercel.app）**
+- 部署地址:**https://aisoc.888927.xyz**
+- 源代码:https://github.com/Ge0metryAI/ai-soc
 - 测试账号(密码均为 `123456`):
 
 | 角色 | 用户名 | 权限 |
@@ -54,15 +55,17 @@ npm run dev   # http://localhost:3000 ,登录 security / 123456
 > 首次访问会自动建表 + 灌入 16 条预置告警种子(无需手动初始化)。
 
 ## ☁️ 部署到 Vercel
-1. 推送到 GitHub → Vercel Import
-2. 配置环境变量:`TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`
-3. Deploy。AI 增强的模型 Key 由用户在「设置」页自行填写(存浏览器,不进 Vercel 环境变量)
+1. 推送到 GitHub → Vercel Import(**Framework Preset 必须为 Next.js**,否则平台不识别产物会全站 404)
+2. 配置环境变量:
+   - 必填:`TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`
+   - 可选(启用真 AI 增强):`AI_API_KEY`(+ `AI_BASE_URL` / `AI_MODEL`)
+3. Deploy。AI 模型 Key **仅存服务端环境变量,前端不存储 / 不显示 / 不传输**;未配置则使用规则模板。
 
 ## 🧠 关键技术决策
 - **为什么用 Turso 而非本地 SQLite?** Vercel 是 Serverless,文件系统只读、`/tmp` 不跨实例持久,本地 `.db` 写入在线上会失效。Turso 是 serverless libSQL(SQLite 协议),HTTP 连接、免费额度大、Vercel 原生兼容。
 - **localStorage 降级**:Turso 不可达时客户端读本地镜像,演示永不空屏(顶部显示"降级模式")。
 - **"AI"是可解释规则引擎**:置信度/优先级/聚合/建议均为确定性纯函数(`src/lib/engine.ts`),UI 透明展示"研判依据"。符合题目"模拟 AI 逻辑(基于规则)而非真实大模型"的要求。
-- **可选真 LLM 增强**:设置页配置任意 OpenAI 兼容接口(OpenAI/DeepSeek/Moonshot/Ollama…),告警详情可「🤖 AI 生成」动态建议,失败自动回退规则模板;服务端 `/api/ai-suggest` 带 SSRF 防护。
+- **可选真 LLM 增强**:通过**服务端环境变量** `AI_API_KEY`(兼容 OpenAI / DeepSeek / Moonshot / 本地 Ollama)启用;告警详情可「🤖 AI 生成」动态建议,失败自动回退规则模板;服务端 `/api/ai-suggest` 带 SSRF 防护,**密钥不下发前端**。
 
 ## 📊 评分点对照
 **功能检查清单(7/7 + 可选第 8)**

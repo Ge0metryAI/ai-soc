@@ -1,6 +1,6 @@
 // 后端 API —— 唯一与 Turso 交互的入口。GET 读快照;POST 执行误报/采纳/重置等操作。
 import { NextResponse } from "next/server";
-import { LEARNING_CEIL, LEARNING_DELTA, LEARNING_FLOOR } from "@/lib/engine";
+import { deriveAlerts, LEARNING_CEIL, LEARNING_DELTA, LEARNING_FLOOR } from "@/lib/engine";
 import {
   addDisposition,
   adjustLearning,
@@ -18,8 +18,30 @@ function getRole(req: Request): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+// AI 自动处置:对置信度 >80% 的待处置告警自动采纳(模拟 AI 自动化响应,operator 记为 AI-自动处置)
+async function autoDisposeHighConfidence() {
+  const snap = await readSnapshot();
+  const disposed = new Set(snap.dispositions.map((d) => d.alertId));
+  const derived = deriveAlerts(snap.alerts, snap.learningMemory, snap.assets);
+  const targets = derived.filter(
+    (a) => a.status === "pending" && a.confidence > 80 && !disposed.has(a.id),
+  );
+  for (const a of targets) {
+    await setAlertStatus(a.id, "adopted");
+    await addDisposition({
+      id: crypto.randomUUID(),
+      alertId: a.id,
+      alertName: a.name,
+      action: a.aiSuggestion ?? "AI 自动处置高危告警",
+      operator: "AI-自动处置",
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
 export async function GET() {
   try {
+    await autoDisposeHighConfidence();
     const snap = await readSnapshot();
     return NextResponse.json(snap);
   } catch (e) {

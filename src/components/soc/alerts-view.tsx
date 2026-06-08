@@ -178,9 +178,9 @@ export function AlertsView() {
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     {canOperate ? (
                       <div className="flex justify-end gap-1">
-                        {a.aiSuggestion && a.status === "pending" && (
+                        {a.status === "pending" && (
                           <Button size="sm" variant="outline" onClick={() => setAdoptTarget(a)}>
-                            采纳
+                            {a.aiSuggestion ? "采纳" : "处置"}
                           </Button>
                         )}
                         {a.status !== "false_positive" ? (
@@ -217,8 +217,10 @@ export function AlertsView() {
       <Dialog open={!!adoptTarget} onOpenChange={(o) => !o && setAdoptTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>采纳 AI 处置建议</DialogTitle>
-            <DialogDescription>{adoptTarget?.aiSuggestion}</DialogDescription>
+            <DialogTitle>{adoptTarget?.aiSuggestion ? "采纳 AI 处置建议" : "人工处置告警"}</DialogTitle>
+            <DialogDescription>
+              {adoptTarget?.aiSuggestion ?? "该告警未达 AI 自动建议阈值,确认按人工研判进行处置?"}
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAdoptTarget(null)}>
@@ -226,11 +228,11 @@ export function AlertsView() {
             </Button>
             <Button
               onClick={() => {
-                if (adoptTarget?.aiSuggestion) void adopt(adoptTarget.id, adoptTarget.aiSuggestion);
+                if (adoptTarget) void adopt(adoptTarget.id, adoptTarget.aiSuggestion ?? "人工研判后处置");
                 setAdoptTarget(null);
               }}
             >
-              确认采纳
+              确认处置
             </Button>
           </DialogFooter>
         </DialogContent>

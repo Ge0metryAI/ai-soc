@@ -4,12 +4,15 @@ import type {
   Alert,
   AlertType,
   Asset,
+  AttackChain,
+  AttackStep,
   ConfidenceBreakdown,
   Kpis,
   LearningMemory,
   Priority,
   RawAlert,
   Severity,
+  SocEvent,
 } from "@/types";
 
 export const LEARNING_DELTA = 15; // 每次误报降低该类型基线分
@@ -192,6 +195,127 @@ export function aggregate(alerts: Alert[]): AggregatedEvent[] {
   }
   return events.sort(
     (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.count - a.count,
+  );
+}
+
+/**
+ * MITRE ATT&CK 杀伤链阶段顺序 —— 决定攻击链 steps 的叙事排序(数值越小越早)。
+ * 依据 MITRE Enterprise 战术链:侦察→初始访问→执行→权限提升→凭证访问→发现→命令与控制。
+ * ⚠ 此排序是攻击链"故事线"的灵魂,直接决定时间线呈现顺序,可按演示侧重调整。
+ */
+const KILL_CHAIN_ORDER: Record<string, number> = {
+  侦察: 1,
+  初始访问: 2,
+  执行: 3,
+  权限提升: 4,
+  凭证访问: 5,
+  发现: 6,
+  命令与控制: 7,
+};
+
+/**
+ * 攻击链聚合:按攻击者(源IP)聚合其全部告警,沿 MITRE 杀伤链阶段还原攻击进程。
+ * 与 aggregate(同源+同类型降噪)互补 —— 此处跨类型,回答"同一攻击者推进到了哪些阶段"。
+ * >=2 条告警才成链(误报不计);单条告警留在原始/告警视图。
+ */
+export function aggregateAttackChains(alerts: Alert[]): AttackChain[] {
+  const active = alerts.filter((a) => a.status !== "false_positive");
+  const byAttacker = new Map<string, Alert[]>();
+  for (const a of active) {
+    const arr = byAttacker.get(a.sourceIp) ?? [];
+    arr.push(a);
+    byAttacker.set(a.sourceIp, arr);
+  }
+  const chains: AttackChain[] = [];
+  for (const [sourceIp, group] of byAttacker) {
+    if (group.length < 2) continue;
+    const steps: AttackStep[] = group
+      .map((a) => {
+        const m = MITRE_MAP[a.alertType];
+        return {
+          time: a.timestamp,
+          alertName: a.name,
+          alertType: a.alertType,
+          tacticId: m.id,
+          tactic: m.tactic,
+          killChainOrder: KILL_CHAIN_ORDER[m.tactic] ?? 99,
+        };
+      })
+      .sort((x, y) => x.killChainOrder - y.killChainOrder || x.time.localeCompare(y.time));
+    const byTime = [...group].sort((x, y) => x.timestamp.localeCompare(y.timestamp));
+    const stageCount = new Set(steps.map((s) => s.tactic)).size;
+    chains.push({
+      id: `chain-${sourceIp.replace(/[^a-zA-Z0-9]/g, "-")}`,
+      sourceIp,
+      alertIds: group.map((g) => g.id),
+      count: group.length,
+      stageCount,
+      firstSeen: byTime[0].timestamp,
+      lastSeen: byTime[byTime.length - 1].timestamp,
+      maxConfidence: Math.max(...group.map((g) => g.confidence)),
+      priority: [...group]
+        .map((g) => g.priority)
+        .sort((a, b) => PRIORITY_RANK[a] - PRIORITY_RANK[b])[0],
+      steps,
+    });
+  }
+  // 多阶段杀伤链优先呈现,其次按优先级、再按告警数
+  return chains.sort(
+    (a, b) =>
+      b.stageCount - a.stageCount ||
+      PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+      b.count - a.count,
+  );
+}
+
+/**
+ * 聚合事件:把原始告警按「同源IP + 同类型」归并 —— >=2 条合并为 1 个事件,其余独立各为 1 个。
+ * 这是"降噪"的核心呈现:N 条原始告警 → M 个事件(M<N)。隶属多阶段攻击链的事件标记 inChain。
+ */
+export function aggregateEvents(alerts: Alert[]): SocEvent[] {
+  const active = alerts.filter((a) => a.status !== "false_positive");
+  const groups = new Map<string, Alert[]>();
+  for (const a of active) {
+    const key = `${a.sourceIp}::${a.alertType}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(a);
+    groups.set(key, arr);
+  }
+  // 多阶段攻击链的源IP集合(用于 inChain 标记)
+  const multiStageIps = new Set(
+    aggregateAttackChains(active)
+      .filter((c) => c.stageCount >= 2)
+      .map((c) => c.sourceIp),
+  );
+  const events: SocEvent[] = [];
+  for (const [key, group] of groups) {
+    const sorted = [...group].sort((x, y) => x.timestamp.localeCompare(y.timestamp));
+    const merged = group.length >= 2;
+    events.push({
+      id: `evt-${key.replace(/[^a-zA-Z0-9]/g, "-")}`,
+      sourceIp: group[0].sourceIp,
+      alertType: group[0].alertType,
+      alertIds: group.map((g) => g.id),
+      count: group.length,
+      merged,
+      name: merged ? ALERT_TYPE_LABEL[group[0].alertType] : group[0].name,
+      firstSeen: sorted[0].timestamp,
+      lastSeen: sorted[sorted.length - 1].timestamp,
+      maxConfidence: Math.max(...group.map((g) => g.confidence)),
+      priority: [...group]
+        .map((g) => g.priority)
+        .sort((a, b) => PRIORITY_RANK[a] - PRIORITY_RANK[b])[0],
+      timeline: sorted.map((g) => ({ time: g.timestamp, alertName: g.name })),
+      inChain: multiStageIps.has(group[0].sourceIp),
+    });
+  }
+  // 合并组优先呈现,再按优先级、告警数、置信度
+  return events.sort(
+    (a, b) =>
+      Number(b.merged) - Number(a.merged) ||
+      PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+      b.count - a.count ||
+      b.maxConfidence - a.maxConfidence,
   );
 }
 

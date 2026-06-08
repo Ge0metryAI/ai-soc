@@ -32,8 +32,12 @@ export const SEED_ALERTS: RawAlert[] = [
   // 场景④ 单条恶意外联(最高置信度)-> 触发 AI 处置建议
   { id: "a11", name: "疑似 C2 心跳外联", alertType: "malware_callback", sourceIp: "10.0.2.50", destIp: "45.61.137.88", severity: "critical", timestamp: T("10:05"), status: "pending" },
 
-  // 填充:覆盖 P3~P0 全谱
+  // 场景⑤ 完整入站攻击链:外部攻击者 162.158.22.10 对官网三阶段推进(侦察→初始访问→权限提升)
   { id: "a12", name: "敏感路径扫描", alertType: "web_scan", sourceIp: "162.158.22.10", destIp: "10.0.1.103", severity: "low", timestamp: T("08:50"), status: "pending" },
+  { id: "a17", name: "SQL 注入获取入口", alertType: "sql_injection", sourceIp: "162.158.22.10", destIp: "10.0.1.103", severity: "critical", timestamp: T("09:05"), status: "pending" },
+  { id: "a18", name: "注入后提权尝试", alertType: "priv_escalation", sourceIp: "162.158.22.10", destIp: "10.0.1.103", severity: "high", timestamp: T("09:35"), status: "pending" },
+
+  // 填充:覆盖 P3~P0 全谱、点缀独立告警(各自单条,不成链)
   { id: "a13", name: "反射型 XSS 尝试", alertType: "xss", sourceIp: "203.0.113.50", destIp: "10.0.1.103", severity: "medium", timestamp: T("09:50"), status: "pending" },
   { id: "a14", name: "本地提权行为", alertType: "priv_escalation", sourceIp: "10.0.2.51", destIp: "10.0.1.100", severity: "high", timestamp: T("10:10"), status: "pending" },
   { id: "a15", name: "TCP 端口扫描", alertType: "port_scan", sourceIp: "185.220.101.5", destIp: "10.0.1.101", severity: "low", timestamp: T("10:15"), status: "pending" },

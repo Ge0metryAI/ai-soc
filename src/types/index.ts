@@ -63,6 +63,47 @@ export interface AggregatedEvent {
   timeline: { time: string; alertName: string }[];
 }
 
+/** 攻击链单步:一次攻击行为及其 MITRE ATT&CK 战术定位 */
+export interface AttackStep {
+  time: string;
+  alertName: string;
+  alertType: AlertType;
+  tacticId: string; // MITRE 技术编号,如 T1190
+  tactic: string; // 战术阶段中文名,如 初始访问
+  killChainOrder: number; // 杀伤链阶段序号(越小越早)
+}
+
+/** 攻击链:按攻击者(源IP)聚合其全部告警,沿 MITRE 杀伤链阶段还原攻击进程 */
+export interface AttackChain {
+  id: string;
+  sourceIp: string;
+  alertIds: string[];
+  count: number; // 链内告警总数
+  stageCount: number; // 跨越的 MITRE 战术阶段数(去重)
+  firstSeen: string;
+  lastSeen: string;
+  maxConfidence: number;
+  priority: Priority; // 链内最高优先级
+  steps: AttackStep[]; // 已按杀伤链阶段排序
+}
+
+/** 聚合事件:告警归并后的单元 —— 同源同类型合并组(count>1),或单条独立告警(count=1) */
+export interface SocEvent {
+  id: string;
+  sourceIp: string;
+  alertType: AlertType;
+  alertIds: string[];
+  count: number; // 1=独立告警, >1=合并组
+  merged: boolean; // count>1
+  name: string; // 合并组用类型标签,独立用原告警名
+  firstSeen: string;
+  lastSeen: string;
+  maxConfidence: number;
+  priority: Priority;
+  timeline: { time: string; alertName: string }[];
+  inChain: boolean; // 是否隶属某条多阶段攻击链(用于 ⊕ 标记)
+}
+
 /** 误报学习记忆:告警类型 -> 置信度调整量(负值=因误报降低) */
 export type LearningMemory = Partial<Record<AlertType, number>>;
 
@@ -83,11 +124,22 @@ export interface SocSnapshot {
   dispositions: DispositionRecord[];
 }
 
+/** 可点击排序的列键 —— 与告警中心表头一一对应(AI建议/操作列不参与排序) */
+export type AlertSortKey =
+  | "priority"
+  | "name"
+  | "alertType"
+  | "sourceIp"
+  | "severity"
+  | "confidence"
+  | "status"
+  | "timestamp";
+
 export interface AlertFilters {
   severity?: Severity;
   priority?: Priority;
   status?: AlertStatus;
-  sortBy: "confidence" | "priority" | "timestamp";
+  sortBy: AlertSortKey;
   sortOrder: "asc" | "desc";
 }
 

@@ -3,8 +3,8 @@
 import { useMemo, useState } from "react";
 import { useSocStore } from "@/store/socStore";
 import { useAiStatus } from "@/store/aiConfigStore";
-import { ALERT_TYPE_LABEL, MITRE_MAP, aggregate, deriveAlerts, priorityRank } from "@/lib/engine";
-import type { Alert, AlertFilters, AlertStatus, Priority, Severity } from "@/types";
+import { ALERT_TYPE_LABEL, MITRE_MAP, aggregateEvents, deriveAlerts, priorityRank } from "@/lib/engine";
+import type { Alert, AlertFilters, AlertStatus, Priority, Severity, SocEvent } from "@/types";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -67,7 +67,7 @@ export function AlertsView() {
   const canOperate = role !== "user1";
 
   const alerts = useMemo(() => deriveAlerts(rawAlerts, learning, assets), [rawAlerts, learning, assets]);
-  const events = useMemo(() => aggregate(alerts), [alerts]);
+  const events = useMemo(() => aggregateEvents(alerts), [alerts]);
 
   const [detail, setDetail] = useState<Alert | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<Alert | null>(null);
@@ -82,12 +82,57 @@ export function AlertsView() {
     const dir = filters.sortOrder === "asc" ? 1 : -1;
     return [...list].sort((a, b) => {
       let c = 0;
-      if (filters.sortBy === "confidence") c = a.confidence - b.confidence;
-      else if (filters.sortBy === "priority") c = priorityRank(a.priority) - priorityRank(b.priority);
-      else c = a.timestamp.localeCompare(b.timestamp);
+      switch (filters.sortBy) {
+        case "confidence":
+          c = a.confidence - b.confidence;
+          break;
+        case "priority":
+          c = priorityRank(a.priority) - priorityRank(b.priority);
+          break;
+        case "name":
+          c = a.name.localeCompare(b.name, "zh");
+          break;
+        case "alertType":
+          c = a.alertType.localeCompare(b.alertType);
+          break;
+        case "sourceIp":
+          c = a.sourceIp.localeCompare(b.sourceIp);
+          break;
+        case "severity": {
+          const R = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+          c = R[a.severity] - R[b.severity];
+          break;
+        }
+        case "status": {
+          const R = { pending: 0, adopted: 1, false_positive: 2 } as const;
+          c = R[a.status] - R[b.status];
+          break;
+        }
+        default:
+          c = a.timestamp.localeCompare(b.timestamp);
+      }
       return c * dir;
     });
   }, [alerts, filters]);
+
+  const sortableHead = (col: AlertFilters["sortBy"], label: string) => {
+    const active = filters.sortBy === col;
+    return (
+      <TableHead
+        className="cursor-pointer select-none whitespace-nowrap hover:text-foreground"
+        onClick={() =>
+          active
+            ? setFilters({ sortOrder: filters.sortOrder === "asc" ? "desc" : "asc" })
+            : setFilters({ sortBy: col, sortOrder: "asc" })
+        }
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          <span className="text-[10px] text-sky-400">{active ? (filters.sortOrder === "asc" ? "▲" : "▼") : ""}</span>
+        </span>
+      </TableHead>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -117,16 +162,7 @@ export function AlertsView() {
               onChange={(v) => setFilters({ status: v === "all" ? undefined : (v as AlertStatus) })}
               options={[["all", "全部状态"], ["pending", "待处置"], ["adopted", "已采纳"], ["false_positive", "误报"]]}
             />
-            <NativeSelect
-              value={filters.sortBy}
-              onChange={(v) => setFilters({ sortBy: v as AlertFilters["sortBy"] })}
-              options={[["priority", "按优先级"], ["confidence", "按置信度"], ["timestamp", "按时间"]]}
-            />
-            <NativeSelect
-              value={filters.sortOrder}
-              onChange={(v) => setFilters({ sortOrder: v as "asc" | "desc" })}
-              options={[["asc", "升序"], ["desc", "降序"]]}
-            />
+            <span className="ml-1 text-xs text-muted-foreground">点击列头排序 ↕</span>
           </>
         )}
       </div>
@@ -136,14 +172,14 @@ export function AlertsView() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>优先级</TableHead>
-                <TableHead>告警</TableHead>
-                <TableHead>类型</TableHead>
-                <TableHead>源 → 目的</TableHead>
-                <TableHead>严重度</TableHead>
-                <TableHead>置信度</TableHead>
+                {sortableHead("priority", "优先级")}
+                {sortableHead("name", "告警")}
+                {sortableHead("alertType", "类型")}
+                {sortableHead("sourceIp", "源 → 目的")}
+                {sortableHead("severity", "严重度")}
+                {sortableHead("confidence", "置信度")}
                 <TableHead>AI 建议</TableHead>
-                <TableHead>状态</TableHead>
+                {sortableHead("status", "状态")}
                 <TableHead className="text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -387,27 +423,34 @@ function AiSuggestionBlock({ a }: { a: Alert }) {
   );
 }
 
-function AggregatedList({ events }: { events: ReturnType<typeof aggregate> }) {
+function AggregatedList({ events }: { events: SocEvent[] }) {
   if (!events.length)
-    return (
-      <Card className="p-6 text-sm text-muted-foreground">
-        当前无可聚合事件(需同源 IP + 同类型 ≥2 条)。
-      </Card>
-    );
+    return <Card className="p-6 text-sm text-muted-foreground">当前无聚合事件。</Card>;
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
       {events.map((e) => (
         <Card key={e.id} className="p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <PriorityBadge p={e.priority} />
               <TypeBadge t={e.alertType} />
             </div>
-            <span className="rounded bg-sky-500/15 px-2 py-0.5 text-xs text-sky-400">合并 {e.count} 条</span>
+            {e.merged ? (
+              <span className="rounded bg-sky-500/15 px-2 py-0.5 text-xs text-sky-400">合并 {e.count} 条</span>
+            ) : (
+              <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">独立</span>
+            )}
           </div>
-          <div className="mt-2 text-sm">源 {e.sourceIp}</div>
+          <div className="mt-2 text-sm">{e.merged ? `${e.sourceIp} · 同类重复` : e.name}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <span>源 {e.sourceIp}</span>
+            {e.inChain && (
+              <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-400">⊕ 攻击链</span>
+            )}
+          </div>
           <div className="text-xs text-muted-foreground">
-            {fmtTime(e.firstSeen)} ~ {fmtTime(e.lastSeen)} · 最高置信度 {e.maxConfidence}
+            {fmtTime(e.firstSeen)}
+            {e.merged ? ` ~ ${fmtTime(e.lastSeen)}` : ""} · 最高置信度 {e.maxConfidence}
           </div>
         </Card>
       ))}

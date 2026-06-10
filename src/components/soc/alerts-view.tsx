@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSocStore } from "@/store/socStore";
 import { useAiStatus } from "@/store/aiConfigStore";
-import { ALERT_TYPE_LABEL, MITRE_MAP, aggregateEvents, deriveAlerts, priorityRank } from "@/lib/engine";
+import { ALERT_TYPE_LABEL, MITRE_MAP, aggregateEvents, checkExemption, deriveAlerts, priorityRank } from "@/lib/engine";
 import type { Alert, AlertFilters, AlertStatus, Priority, Severity, SocEvent } from "@/types";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   ConfidenceBar,
+  ExemptBadge,
   MitreBadge,
   PriorityBadge,
   SeverityBadge,
@@ -63,11 +64,14 @@ export function AlertsView() {
   const markFalsePositive = useSocStore((s) => s.markFalsePositive);
   const markTruePositive = useSocStore((s) => s.markTruePositive);
   const adopt = useSocStore((s) => s.adopt);
+  const whitelist = useSocStore((s) => s.whitelist);
+  const aiLive = useSocStore((s) => s.aiLive);
   const role = useSocStore((s) => s.role);
   const canOperate = role !== "user1";
 
   const alerts = useMemo(() => deriveAlerts(rawAlerts, learning, assets), [rawAlerts, learning, assets]);
   const events = useMemo(() => aggregateEvents(alerts), [alerts]);
+  const assetMap = useMemo(() => Object.fromEntries(assets.map((x) => [x.ip, x])), [assets]);
 
   const [detail, setDetail] = useState<Alert | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<Alert | null>(null);
@@ -133,6 +137,9 @@ export function AlertsView() {
       </TableHead>
     );
   };
+
+  // 采纳弹窗使用的建议文案:优先 AI(aiLive),否则规则模板
+  const adoptSuggestion = adoptTarget ? aiLive[adoptTarget.id] ?? adoptTarget.aiSuggestion : null;
 
   return (
     <div className="space-y-4">
@@ -205,18 +212,41 @@ export function AlertsView() {
                   <TableCell>
                     <ConfidenceBar value={a.confidence} />
                   </TableCell>
-                  <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
-                    {a.aiSuggestion ?? "—"}
+                  <TableCell className="max-w-[220px] text-xs text-muted-foreground">
+                    {(() => {
+                      const live = aiLive[a.id];
+                      const text = live ?? a.aiSuggestion;
+                      if (!text) return "—";
+                      return (
+                        <div className="flex items-center gap-1">
+                          <span className="min-w-0 truncate" title={text}>
+                            {text}
+                          </span>
+                          <span
+                            className={
+                              live
+                                ? "shrink-0 rounded bg-sky-500/15 px-1 text-[9px] text-sky-400"
+                                : "shrink-0 rounded bg-muted px-1 text-[9px] text-muted-foreground"
+                            }
+                          >
+                            {live ? "AI" : "规则"}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell>
-                    <StatusBadge s={a.status} />
+                    <div className="flex items-center gap-1">
+                      <StatusBadge s={a.status} />
+                      {checkExemption(a, whitelist, assetMap).exempt && <ExemptBadge />}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     {canOperate ? (
                       <div className="flex justify-end gap-1">
                         {a.status === "pending" && (
                           <Button size="sm" variant="outline" onClick={() => setAdoptTarget(a)}>
-                            {a.aiSuggestion ? "采纳" : "处置"}
+                            {(aiLive[a.id] ?? a.aiSuggestion) ? "采纳" : "处置"}
                           </Button>
                         )}
                         {a.status !== "false_positive" ? (
@@ -253,9 +283,9 @@ export function AlertsView() {
       <Dialog open={!!adoptTarget} onOpenChange={(o) => !o && setAdoptTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{adoptTarget?.aiSuggestion ? "采纳 AI 处置建议" : "人工处置告警"}</DialogTitle>
+            <DialogTitle>{adoptSuggestion ? "采纳 AI 处置建议" : "人工处置告警"}</DialogTitle>
             <DialogDescription>
-              {adoptTarget?.aiSuggestion ?? "该告警未达 AI 自动建议阈值,确认按人工研判进行处置?"}
+              {adoptSuggestion ?? "该告警未达 AI 自动建议阈值,确认按人工研判进行处置?"}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -264,7 +294,7 @@ export function AlertsView() {
             </Button>
             <Button
               onClick={() => {
-                if (adoptTarget) void adopt(adoptTarget.id, adoptTarget.aiSuggestion ?? "人工研判后处置");
+                if (adoptTarget) void adopt(adoptTarget.id, adoptSuggestion ?? "人工研判后处置");
                 setAdoptTarget(null);
               }}
             >
@@ -287,6 +317,12 @@ const sign = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
 function AlertDetail({ a }: { a: Alert }) {
   const b = a.breakdown;
+  const whitelist = useSocStore((s) => s.whitelist);
+  const assets = useSocStore((s) => s.assets);
+  const exemption = useMemo(() => {
+    const assetMap = Object.fromEntries(assets.map((x) => [x.ip, x]));
+    return checkExemption(a, whitelist, assetMap);
+  }, [a, whitelist, assets]);
   return (
     <>
       <SheetHeader>
@@ -298,7 +334,7 @@ function AlertDetail({ a }: { a: Alert }) {
           {a.sourceIp} → {a.destIp} · {fmtTime(a.timestamp)}
         </SheetDescription>
       </SheetHeader>
-      <div className="space-y-4 px-4 pb-4 text-sm">
+      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto px-4 pb-4 text-sm">
         <div className="flex flex-wrap gap-2">
           <TypeBadge t={a.alertType} />
           <MitreBadge t={a.alertType} />
@@ -323,6 +359,19 @@ function AlertDetail({ a }: { a: Alert }) {
             </span>
           </div>
         </div>
+        {a.evidence && (
+          <div className="rounded-lg border p-3 text-xs">
+            <div className="mb-1 font-medium text-muted-foreground">原始告警证据(供人工复核)</div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-[11px] leading-5">
+              {a.evidence}
+            </pre>
+          </div>
+        )}
+        {exemption.exempt && (
+          <div className="rounded-lg border border-teal-500/30 bg-teal-500/10 p-3 text-xs text-teal-200">
+            🛡 命中白名单豁免:{exemption.reason} —— 自动模式下绝不会被 AI 自动处置。
+          </div>
+        )}
         <div className="rounded-lg border p-3">
           <div className="mb-2 text-xs font-medium text-muted-foreground">研判依据(可解释规则引擎)</div>
           <div className="mb-2 flex items-center justify-between">
@@ -360,11 +409,20 @@ function AlertDetail({ a }: { a: Alert }) {
 
 function AiSuggestionBlock({ a }: { a: Alert }) {
   const configured = useAiStatus((s) => s.configured);
-  const [aiText, setAiText] = useState<string | null>(null);
+  const cached = useSocStore((s) => s.aiLive[a.id]); // 该告警已生成过的 AI 建议(store 缓存)
+  const setAiSuggestion = useSocStore((s) => s.setAiSuggestion);
+  const [aiText, setAiText] = useState<string | null>(cached ?? null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // 保存当前进行中的请求控制器:每次新生成(自动/手动)先取消上一次在途请求,
+  // 既避免并发「后到旧响应」覆盖新告警建议,也消除开发期 StrictMode 双挂载导致的重复生成。
+  const abortRef = useRef<AbortController | null>(null);
+
   async function gen() {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setLoading(true);
     setErr(null);
     setAiText(null);
@@ -383,15 +441,37 @@ function AiSuggestionBlock({ a }: { a: Alert }) {
             priority: a.priority,
           },
         }),
+        signal: ctrl.signal,
       });
       const data = await res.json();
-      if (res.ok) setAiText(data.suggestion || "(空响应)");
-      else setErr(data.error || "生成失败");
+      if (ctrl.signal.aborted) return; // 已被取消:不写入过期状态
+      if (res.ok) {
+        const text: string = data.suggestion || "(空响应)";
+        setAiText(text);
+        if (data.suggestion) setAiSuggestion(a.id, data.suggestion); // 回写 store → 告警表"AI 建议"列实时更新并缓存
+      } else {
+        setErr(data.error || "生成失败");
+      }
     } catch (e) {
-      setErr(String(e));
+      if ((e as Error).name === "AbortError") return; // 被新请求/卸载取消:静默忽略
+      if (!ctrl.signal.aborted) setErr(String(e));
+    } finally {
+      if (!ctrl.signal.aborted) setLoading(false);
     }
-    setLoading(false);
   }
+
+  // 打开告警详情即自动生成 AI 建议(已配置 key 时);下方按钮保留为手动重新生成。
+  // 清理函数在卸载/切换告警时取消在途请求 —— 这正是 StrictMode 要暴露的「缺失清理」。
+  useEffect(() => {
+    if (!configured) return;
+    if (cached) {
+      setAiText(cached); // 已有缓存:直接展示,不重复调用模型(手动「重新生成」仍可刷新)
+      return;
+    }
+    void gen();
+    return () => abortRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a.id, configured]);
 
   return (
     <div className="rounded-lg border p-3">
@@ -405,7 +485,7 @@ function AiSuggestionBlock({ a }: { a: Alert }) {
             onClick={() => void gen()}
             disabled={loading}
           >
-            {loading ? "生成中..." : "🤖 AI 生成"}
+            {loading ? "生成中..." : aiText ? "🔄 重新生成" : "🤖 AI 生成"}
           </Button>
         )}
       </div>

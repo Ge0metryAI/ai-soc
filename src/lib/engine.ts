@@ -13,6 +13,7 @@ import type {
   RawAlert,
   Severity,
   SocEvent,
+  WhitelistEntry,
 } from "@/types";
 
 export const LEARNING_DELTA = 15; // 每次误报降低该类型基线分
@@ -143,6 +144,73 @@ export function generateSuggestion(
     return interpolate(SUGGESTION_TEMPLATES[alert.alertType] ?? "建议人工研判 {sourceIp} 的行为", alert);
   }
   return null;
+}
+
+/** IPv4 是否落入 CIDR 网段(演示级,仅 IPv4) */
+export function ipInCidr(ip: string, cidr: string): boolean {
+  const [range, bitsRaw] = cidr.split("/");
+  const bits = Number(bitsRaw);
+  if (!range || !Number.isInteger(bits) || bits < 0 || bits > 32) return false;
+  const toInt = (s: string): number | null => {
+    const p = s.split(".").map(Number);
+    if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+  };
+  const a = toInt(ip);
+  const b = toInt(range);
+  if (a === null || b === null) return false;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (a & mask) === (b & mask);
+}
+
+/**
+ * 白名单豁免判定 —— 命中则该告警绝不被自动处置(防 AI 误伤的安全阀)。
+ * 规则①:核心资产(importance=3)自动保护,绝不对自家关键主机做自动动作。
+ * 规则②:手动白名单 —— 源/目的 IP 命中精确 IP 或 CIDR 网段。
+ * 返回命中原因供 UI 透明展示;未命中 exempt=false。
+ */
+export function checkExemption(
+  alert: Pick<RawAlert, "sourceIp" | "destIp">,
+  whitelist: WhitelistEntry[],
+  assetMap: Record<string, Asset>,
+): { exempt: boolean; reason: string } {
+  const destAsset = assetMap[alert.destIp];
+  if (destAsset && destAsset.importance === 3) {
+    return { exempt: true, reason: `核心资产保护:${destAsset.name}` };
+  }
+  for (const w of whitelist) {
+    for (const [side, ip] of [
+      ["源", alert.sourceIp],
+      ["目的", alert.destIp],
+    ] as const) {
+      const hit = w.kind === "cidr" ? ipInCidr(ip, w.value) : ip === w.value;
+      if (hit) return { exempt: true, reason: `白名单(${side} ${ip} ∈ ${w.value})` };
+    }
+  }
+  return { exempt: false, reason: "" };
+}
+
+/**
+ * 危险处置动作类型 —— 即便开启自动模式,这些类型也永远只给建议、绝不自动执行。
+ * malware_callback → 隔离主机(影响业务可用性);priv_escalation → 下线主机/冻结账号(影响人与权限)。
+ * ⚠ 决策点:此清单与下方阈值由安全团队按风险偏好校准。
+ */
+export const DANGEROUS_ACTIONS: ReadonlySet<AlertType> = new Set<AlertType>([
+  "malware_callback",
+  "priv_escalation",
+]);
+
+/** 自动处置最低置信度阈值。⚠ 决策点:可按风险偏好调整。 */
+export const AUTO_CONFIDENCE_THRESHOLD = 90;
+
+/** 自动处置资格:仅待处置 + P0/P1 + 置信度≥阈值 + 非危险动作类型(危险类型降级为仅建议) */
+export function isAutoEligible(
+  alert: Pick<Alert, "alertType" | "confidence" | "priority" | "status">,
+): boolean {
+  if (alert.status !== "pending") return false;
+  if (DANGEROUS_ACTIONS.has(alert.alertType)) return false;
+  if (alert.priority !== "P0" && alert.priority !== "P1") return false;
+  return alert.confidence >= AUTO_CONFIDENCE_THRESHOLD;
 }
 
 export function deriveAlert(

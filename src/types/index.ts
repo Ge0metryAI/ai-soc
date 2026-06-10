@@ -29,6 +29,19 @@ export interface RawAlert {
   severity: Severity;
   timestamp: string; // ISO 8601
   status: AlertStatus;
+  evidence?: string; // 触发该告警的原始信号(日志行/请求载荷/外联记录),供人工复核 AI 研判
+}
+
+/** 处置模式:建议模式(默认,全程人工确认)/ 自动处置模式(仅演练·非生产显式开启) */
+export type DispositionMode = "advisory" | "auto";
+
+/** 白名单条目:命中则该告警永不被自动处置(核心资产为引擎自动豁免,不入此表) */
+export interface WhitelistEntry {
+  id: string;
+  value: string; // IP 或 CIDR 网段,如 "10.0.1.100" / "10.0.1.0/24"
+  kind: "ip" | "cidr";
+  note?: string;
+  createdAt: string; // ISO 8601
 }
 
 /** 置信度研判依据 —— 可解释规则引擎核心,供 UI 透明展示 */
@@ -112,8 +125,11 @@ export interface DispositionRecord {
   alertId: string;
   alertName: string;
   action: string;
-  operator: string;
+  operator: string; // 人工="security"/角色名;自动="AI-自动"
   timestamp: string;
+  mode: DispositionMode; // 该处置发生时的模式
+  auto: boolean; // 是否 AI 自动执行(true)还是人工采纳(false)
+  revoked: boolean; // 是否已撤销/恢复(撤销保留记录用于审计)
 }
 
 /** 服务端 /api/soc 返回 & localStorage 降级镜像的快照 */
@@ -122,6 +138,8 @@ export interface SocSnapshot {
   alerts: RawAlert[];
   learningMemory: LearningMemory;
   dispositions: DispositionRecord[];
+  dispositionMode: DispositionMode; // 当前全局处置模式
+  whitelist: WhitelistEntry[];
 }
 
 /** 可点击排序的列键 —— 与告警中心表头一一对应(AI建议/操作列不参与排序) */
@@ -152,6 +170,34 @@ export interface Kpis {
   denoiseRate: number; // 降噪率 0-1
   falsePositiveRate: number; // 误报率 0-1
   dispositionRate: number; // 处置率 0-1 (已采纳+已标记误报)/总数
+}
+
+/** AI 分析结果来源:真·LLM 生成 or 规则模板兜底(UI 角标透明展示) */
+export type AiSource = "ai" | "rule";
+
+/** 攻击链 AI 研判(/api/ai-analyze mode=chain) */
+export interface ChainAnalysis {
+  source: AiSource;
+  narrative: string; // 杀伤链叙事
+  intent: string; // 攻击者意图
+  nextActions: string[]; // 下一步可能动作预测
+  priorityAdvice: string; // 优先处置建议
+}
+
+/** 聚合事件 AI 研判(/api/ai-analyze mode=event) */
+export interface EventAnalysis {
+  source: AiSource;
+  rationale: string; // 归并成因
+  risk: string; // 风险研判
+  needsHuman: boolean; // 是否需人工立即介入
+}
+
+/** 全局态势 AI 总结(/api/ai-analyze mode=posture) */
+export interface PostureAnalysis {
+  source: AiSource;
+  summary: string; // 一段话态势总结
+  topThreat: string; // 当前最大威胁
+  recommendations: string[]; // 优先处置建议
 }
 
 export type ConnectionMode = "online" | "fallback";

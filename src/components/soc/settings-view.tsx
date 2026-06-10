@@ -1,10 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot } from "lucide-react";
+import { Bot, ListChecks, ShieldCheck } from "lucide-react";
 import { useAiStatus } from "@/store/aiConfigStore";
+import { useSocStore } from "@/store/socStore";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import type { DispositionMode } from "@/types";
+
+function segCls(active: boolean) {
+  return `rounded px-3 py-1.5 text-sm transition-colors ${
+    active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+  } disabled:cursor-not-allowed disabled:opacity-50`;
+}
+
+const inputCls =
+  "h-8 rounded-md border border-input bg-background px-2 text-sm outline-none focus:border-ring";
 
 export function SettingsView() {
   const configured = useAiStatus((s) => s.configured);
@@ -13,9 +24,44 @@ export function SettingsView() {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
+  const dispositionMode = useSocStore((s) => s.dispositionMode);
+  const setDispositionMode = useSocStore((s) => s.setDispositionMode);
+  const runAutoDisposition = useSocStore((s) => s.runAutoDisposition);
+  const whitelist = useSocStore((s) => s.whitelist);
+  const addWhitelist = useSocStore((s) => s.addWhitelist);
+  const removeWhitelist = useSocStore((s) => s.removeWhitelist);
+  const role = useSocStore((s) => s.role);
+  const canOperate = role !== "user1";
+
+  const [wlValue, setWlValue] = useState("");
+  const [wlKind, setWlKind] = useState<"ip" | "cidr">("ip");
+  const [wlNote, setWlNote] = useState("");
+
   useEffect(() => {
     void check();
   }, [check]);
+
+  async function switchMode(m: DispositionMode) {
+    if (m === dispositionMode || !canOperate) return;
+    if (
+      m === "auto" &&
+      !window.confirm(
+        "确认切换到【自动处置模式】?AI 将立即对高置信度 P0/P1 告警自动处置(隔离主机/冻结账号等危险动作除外),核心资产与白名单不受影响。建议仅在攻防演练 / 非生产环境使用。",
+      )
+    ) {
+      return;
+    }
+    await setDispositionMode(m);
+    if (m === "auto") await runAutoDisposition();
+  }
+
+  function addWl() {
+    const v = wlValue.trim();
+    if (!v) return;
+    void addWhitelist(v, wlKind, wlNote);
+    setWlValue("");
+    setWlNote("");
+  }
 
   async function test() {
     setTesting(true);
@@ -36,6 +82,87 @@ export function SettingsView() {
 
   return (
     <div className="max-w-2xl space-y-4">
+      {/* 处置模式 —— 默认建议模式,人在回路 */}
+      <Card className="space-y-4 p-6">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <ShieldCheck className="size-4 text-emerald-400" />
+          处置模式
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          默认<strong className="text-emerald-300">建议模式</strong>:AI 仅研判并给出建议,所有处置动作均需人工在告警中心确认。
+          <strong className="text-red-300">自动处置模式</strong>仅建议在攻防演练 / 非生产环境开启 —— AI 会对高置信度(≥90)的 P0/P1
+          告警自动处置,但<strong>隔离主机、冻结账号等危险动作永远只给建议</strong>;核心资产与白名单 IP 绝不自动处置。
+        </p>
+        <div className="inline-flex rounded-md border p-0.5">
+          <button onClick={() => void switchMode("advisory")} className={segCls(dispositionMode === "advisory")} disabled={!canOperate}>
+            建议模式(推荐)
+          </button>
+          <button onClick={() => void switchMode("auto")} className={segCls(dispositionMode === "auto")} disabled={!canOperate}>
+            自动处置模式
+          </button>
+        </div>
+        {dispositionMode === "auto" && (
+          <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-300">
+            ⚠ 当前为自动处置模式。如发现误处置,可在「处置历史」一键恢复全部自动处置。
+          </div>
+        )}
+        {!canOperate && <p className="text-xs text-muted-foreground">只读账号(user1)无权修改处置模式。</p>}
+      </Card>
+
+      {/* 白名单 —— 防 AI 误伤的安全阀 */}
+      <Card className="space-y-4 p-6">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <ListChecks className="size-4 text-teal-400" />
+          自动处置白名单
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          命中白名单的告警在自动模式下绝不会被 AI 处置。
+          <strong>核心资产(重要性=核心)已自动纳入保护,无需手动添加。</strong>
+          此处维护额外的 IP / CIDR 网段白名单(对告警的源、目的地址均生效)。
+        </p>
+        {canOperate && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={wlValue}
+              onChange={(e) => setWlValue(e.target.value)}
+              placeholder="10.0.1.0/24 或 203.0.113.7"
+              className={`${inputCls} w-48 font-mono`}
+            />
+            <select value={wlKind} onChange={(e) => setWlKind(e.target.value as "ip" | "cidr")} className={inputCls}>
+              <option value="ip">精确 IP</option>
+              <option value="cidr">CIDR 网段</option>
+            </select>
+            <input
+              value={wlNote}
+              onChange={(e) => setWlNote(e.target.value)}
+              placeholder="备注(可选)"
+              className={`${inputCls} w-40`}
+            />
+            <Button size="sm" onClick={addWl} disabled={!wlValue.trim()}>
+              添加
+            </Button>
+          </div>
+        )}
+        <div className="space-y-1">
+          {whitelist.length === 0 && <p className="text-xs text-muted-foreground">暂无手动白名单条目。</p>}
+          {whitelist.map((w) => (
+            <div key={w.id} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-teal-300">{w.kind === "cidr" ? "网段" : "IP"}</span>
+                <span className="font-mono">{w.value}</span>
+                {w.note && <span className="text-muted-foreground">· {w.note}</span>}
+              </div>
+              {canOperate && (
+                <button onClick={() => void removeWhitelist(w.id)} className="text-muted-foreground hover:text-red-400">
+                  移除
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* AI 增强(动态建议生成)*/}
       <Card className="space-y-4 p-6">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Bot className="size-4 text-sky-400" />

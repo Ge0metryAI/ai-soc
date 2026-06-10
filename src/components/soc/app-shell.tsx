@@ -37,6 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const status = useSocStore((s) => s.status);
   const role = useSocStore((s) => s.role);
   const setRole = useSocStore((s) => s.setRole);
+  const dispositionMode = useSocStore((s) => s.dispositionMode);
   const aiConfigured = useAiStatus((s) => s.configured);
   const checkAi = useAiStatus((s) => s.check);
   const canOperate = role !== "user1";
@@ -149,6 +150,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </div>
         </header>
+        {dispositionMode === "auto" && (
+          <div className="flex items-center gap-2 border-b border-red-500/40 bg-red-500/10 px-6 py-2 text-xs text-red-300">
+            <ShieldAlert className="size-4 shrink-0" />
+            <span>
+              ⚠ 自动处置模式已开启 —— AI 将对高置信度 P0/P1 告警自动执行处置(隔离主机/冻结账号等危险动作仍仅建议)。仅限攻防演练 / 非生产环境;可在「设置」切回建议模式,或在「处置历史」一键恢复全部自动处置。
+            </span>
+          </div>
+        )}
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
     </div>

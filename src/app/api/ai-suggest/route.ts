@@ -110,7 +110,7 @@ export async function POST(req: Request) {
           { role: "user", content: usr },
         ],
         temperature: 0.3,
-        max_tokens: 200,
+        max_tokens: 1000,
       }),
     });
     if (!res.ok) {

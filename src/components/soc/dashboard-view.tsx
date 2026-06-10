@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
-import { Activity, AlertTriangle, ArrowRight, CheckCheck, Flame, Gauge, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCheck, Flame, Gauge, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { useSocStore } from "@/store/socStore";
-import { aggregate, computeKpis, deriveAlerts, priorityRank } from "@/lib/engine";
+import { ALERT_TYPE_LABEL, aggregate, aggregateAttackChains, computeKpis, deriveAlerts, priorityRank } from "@/lib/engine";
+import { analyze } from "@/lib/ai-analyze";
 import { Card } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -13,7 +14,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { ConfidenceBar, PRIORITY_META, PriorityBadge, TypeBadge, fmtTime } from "@/components/soc/meta";
-import type { Priority } from "@/types";
+import type { PostureAnalysis, Priority } from "@/types";
 
 export function DashboardView() {
   const assets = useSocStore((s) => s.assets);
@@ -24,6 +25,7 @@ export function DashboardView() {
   const alerts = useMemo(() => deriveAlerts(rawAlerts, learning, assets), [rawAlerts, learning, assets]);
   const events = useMemo(() => aggregate(alerts), [alerts]);
   const kpis = useMemo(() => computeKpis(alerts, events), [alerts, events]);
+  const chains = useMemo(() => aggregateAttackChains(alerts), [alerts]);
 
   const priorityData = useMemo(() => {
     const order: Priority[] = ["P0", "P1", "P2", "P3"];
@@ -63,6 +65,7 @@ export function DashboardView() {
 
   return (
     <div className="space-y-6">
+      <PostureCard kpis={kpis} chains={chains} events={events} />
       {/* AI 智能降噪 —— 头号能力,显眼呈现 */}
       <Card className="p-5">
         <div className="flex items-center gap-2 text-sm font-medium">
@@ -194,6 +197,114 @@ export function DashboardView() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/** AI 今日安全态势卡 —— 进页自动综合 KPIs+Top威胁生成总结,失败/无 key 回退规则文本 */
+function PostureCard({
+  kpis,
+  chains,
+  events,
+}: {
+  kpis: ReturnType<typeof computeKpis>;
+  chains: ReturnType<typeof aggregateAttackChains>;
+  events: ReturnType<typeof aggregate>;
+}) {
+  const [data, setData] = useState<PostureAnalysis | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const run = (force: boolean) =>
+    analyze(
+      "posture",
+      {
+        totalAlerts: kpis.totalAlerts,
+        eventCount: kpis.eventCount,
+        pendingHighRisk: kpis.pendingHighRisk,
+        denoiseRate: kpis.denoiseRate,
+        topChains: chains
+          .filter((c) => c.stageCount >= 2)
+          .slice(0, 3)
+          .map((c) => ({ sourceIp: c.sourceIp, stageCount: c.stageCount, priority: c.priority })),
+        topEvents: events
+          .slice(0, 3)
+          .map((e) => ({
+            sourceIp: e.sourceIp,
+            alertTypeLabel: ALERT_TYPE_LABEL[e.alertType],
+            count: e.count,
+            priority: e.priority,
+          })),
+      },
+      `posture:${kpis.totalAlerts}:${kpis.eventCount}:${kpis.pendingHighRisk}:${chains.length}`,
+      force,
+    );
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setData(null);
+    run(false)
+      .then((r) => alive && setData(r))
+      .catch(() => alive && setData(null))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kpis.totalAlerts, kpis.eventCount, kpis.pendingHighRisk, chains.length]);
+
+  const refresh = () => {
+    setLoading(true);
+    run(true)
+      .then(setData)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <Card className="border-violet-500/30 bg-violet-500/5 p-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium text-violet-100">
+          <Sparkles className="size-4 text-violet-300" />
+          AI 今日安全态势
+          {data &&
+            (data.source === "ai" ? (
+              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">🤖 AI 生成</span>
+            ) : (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">规则生成</span>
+            ))}
+        </div>
+        <button
+          onClick={refresh}
+          disabled={loading}
+          className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+        >
+          <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} /> 刷新
+        </button>
+      </div>
+      {loading ? (
+        <div className="mt-3 animate-pulse text-sm text-muted-foreground">AI 正在研判当前安全态势……</div>
+      ) : data ? (
+        <div className="mt-3 space-y-2 text-sm leading-relaxed">
+          <p>{data.summary}</p>
+          <p>
+            <span className="text-muted-foreground">最大威胁:</span>
+            <span className="text-red-300">{data.topThreat}</span>
+          </p>
+          {data.recommendations.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">优先处置建议:</span>
+              <ul className="ml-4 mt-1 list-decimal space-y-0.5 text-amber-200/90">
+                {data.recommendations.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3 text-sm text-muted-foreground">AI 态势研判暂不可用。</div>
+      )}
+    </Card>
   );
 }
 

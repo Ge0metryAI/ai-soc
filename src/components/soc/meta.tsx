@@ -54,6 +54,20 @@ export function MitreBadge({ t }: { t: AlertType }) {
   );
 }
 
+/** 白名单/核心资产豁免标记 —— 命中则该告警绝不被 AI 自动处置 */
+export function ExemptBadge() {
+  return <Pill className="bg-teal-500/15 text-teal-300 ring-teal-500/30">🛡 已豁免</Pill>;
+}
+
+/** 处置来源标记 —— 区分 AI 自动处置与人工采纳(用于一键恢复时精准识别 AI 动作) */
+export function SourceBadge({ auto }: { auto: boolean }) {
+  return auto ? (
+    <Pill className="bg-violet-500/15 text-violet-300 ring-violet-500/30">AI 自动</Pill>
+  ) : (
+    <Pill className="bg-sky-500/15 text-sky-400 ring-sky-500/30">人工</Pill>
+  );
+}
+
 /** 判断是否为外部(公网)IP —— 用于威胁情报富化提示 */
 export function isExternalIp(ip: string): boolean {
   return !(

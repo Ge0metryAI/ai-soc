@@ -24,7 +24,6 @@
 | 17 | 安全 | "有漏洞就要修" | 自审发现并修复 SSRF(`/api/ai-suggest`)+ 角色服务端校验,实测 403/400 拦截 | 漏洞闭环 |
 | 18 | 交付 | 写 README + Vibe 文档 | 本批文档 | 收尾 |
 | 19 | 部署 | Vercel 部署后全站 404 | 顺 Vercel REST API 逐层排查 → 定位 `framework=null` 致产物为空 → 设 nextjs + 全新部署 | 404 修复 |
-| 20 | 推送 | 提交 GitHub(账号已改名) | gh 建仓推送;确认 jhhd88=Ge0metryAI 同账号;修正提交作者归属 | 仓库就绪 |
 | 21 | 观测 | Speed Insights/Analytics 无数据 | 装 `@vercel/speed-insights`+`@vercel/analytics` 并在 layout 渲染采集组件 | 接入观测 |
 | 22 | 安全 | 登录闪烁 + API Key 不应前端可见 | 加鉴权门(消除闪烁)+ 密钥移至服务端环境变量(前端不存/不传) | 体验+安全加固 |
 | 23 | 产品 | >80% 应 AI 自动处置 + 非 P0 也要处置按钮 | GET 自动处置高置信告警(operator=AI-自动处置)+ 处置按钮覆盖全部待处置 | 自动化响应 |
